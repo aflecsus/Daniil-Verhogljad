@@ -1,0 +1,10 @@
+{
+  "allowed_ports": {
+    "default": [22],
+    "hq-controller": [8080],
+    "srv-app-01": [22, 80]
+  },
+  "critical_files": ["/etc/passwd", "/etc/shadow", "/etc/ssh/sshd_config", "/etc/sudoers"],
+  "fin_dir": "/home/raamatupidaja/Raamatupidamine_2026",
+  "stale_after_seconds": 900
+}

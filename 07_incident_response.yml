@@ -1,0 +1,58 @@
+---
+# Avariitaaste: pahavara tapmine, võõraste kontode eemaldamine, ws-fin-01 taastamine backup-vault'ist.
+# Taastatav sõlm: -e restore_host=ws-fin-01 (vaikimisi)
+- name: 1/4 Likvideeri intsidendid sõlmedes
+  hosts: managed
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: /usr/local/bin/fleet_collect remediate
+      register: rem
+      changed_when: (rem.stdout | from_json).actions | length > 0
+    - ansible.builtin.debug: { msg: "{{ (rem.stdout | from_json).actions }}" }
+      when: (rem.stdout | from_json).actions | length > 0
+
+- name: 2/4 Leia värskeim varukoopia vaultist ja kontrolli SHA-256
+  hosts: backup-vault
+  gather_facts: false
+  vars: { rh: "{{ restore_host | default('ws-fin-01') }}" }
+  tasks:
+    - ansible.builtin.shell: ls -1t /srv/vault/{{ rh }}/*.tgz.enc | head -n1
+      register: latest
+      changed_when: false
+    - ansible.builtin.shell: cd /srv/vault/{{ rh }} && sha256sum -c {{ latest.stdout | basename }}.sha256
+      changed_when: false
+    - ansible.builtin.fetch:
+        src: "{{ latest.stdout }}"
+        dest: "/opt/cyberfleet/staging/restore-{{ rh }}.tgz.enc"
+        flat: true
+
+- name: 3/4 Dekrüpteeri kontrolleris
+  hosts: controller
+  gather_facts: false
+  vars_files: [vars/backup.yml]
+  vars: { rh: "{{ restore_host | default('ws-fin-01') }}" }
+  tasks:
+    - ansible.builtin.shell: >
+        openssl enc -d -aes-256-cbc -pbkdf2 -iter {{ pbkdf2_iter }}
+        -in restore-{{ rh }}.tgz.enc -out restore-{{ rh }}.tgz -pass file:{{ keyfile }}
+      args: { chdir: "{{ staging }}" }
+
+- name: 4/4 Taasta failid sihtsõlmes
+  hosts: "{{ restore_host | default('ws-fin-01') }}"
+  gather_facts: false
+  vars_files: [vars/backup.yml]
+  vars: { rh: "{{ restore_host | default('ws-fin-01') }}" }
+  tasks:
+    - ansible.builtin.copy: { src: "{{ staging }}/restore-{{ rh }}.tgz", dest: /tmp/restore.tgz, mode: "0600" }
+    - ansible.builtin.command: tar -xzf /tmp/restore.tgz -C /
+    - ansible.builtin.file: { path: /tmp/restore.tgz, state: absent }
+
+- name: Kustuta lahtipakitud tekstikoopia kontrollerist
+  hosts: controller
+  gather_facts: false
+  vars_files: [vars/backup.yml]
+  tasks:
+    - ansible.builtin.shell: rm -f {{ staging }}/restore-*.tgz {{ staging }}/restore-*.tgz.enc
+      changed_when: true
+
+- import_playbook: 05_security_audit.yml

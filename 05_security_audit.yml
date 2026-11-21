@@ -1,0 +1,25 @@
+---
+# Osquery HIDS/FIM: SHA-256 räsid, kustutatud binaaridega protsessid, UID=0, pordid.
+# Häired ilmuvad punaselt armatuurlauale. Baseline loomine: -e init_baseline=true
+- name: Kogu turvaandmed
+  hosts: all
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: /usr/local/bin/fleet_collect security
+      register: sec
+      changed_when: false
+    - ansible.builtin.copy:
+        content: "{{ sec.stdout }}\n"
+        dest: "/opt/cyberfleet/data/{{ inventory_hostname }}.security.json"
+      delegate_to: localhost
+
+- name: Uuenda armatuurlauda
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: >
+        python3 {{ playbook_dir }}/../files/render_dashboard.py
+        {{ '--init-baseline' if (init_baseline | default(false) | bool) else '' }}
+      register: render
+      changed_when: false
+    - ansible.builtin.debug: { msg: "{{ render.stdout }}" }

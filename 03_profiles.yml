@@ -1,0 +1,80 @@
+---
+# ÕV 3 & 4: rollipõhised kasutajaprofiilid + srv-app-01 dnf/rpm baasseadistus
+- name: Arendaja profiil (ws-dev-01)
+  hosts: ws-dev-01
+  gather_facts: false
+  tasks:
+    - ansible.builtin.apt:
+        name: [git, python3, vim, htop, sudo]
+        state: present
+        update_cache: true
+    - ansible.builtin.user: { name: arendaja, shell: /bin/bash, groups: sudo, append: true, create_home: true }
+    - ansible.builtin.copy:
+        content: "arendaja ALL=(ALL) NOPASSWD:ALL\n"
+        dest: /etc/sudoers.d/arendaja
+        mode: "0440"
+        validate: "visudo -cf %s"
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../profiles/dev/bashrc", dest: /home/arendaja/.bashrc, owner: arendaja, group: arendaja, mode: "0644" }
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../profiles/dev/gitconfig", dest: /home/arendaja/.gitconfig, owner: arendaja, group: arendaja, mode: "0644" }
+    - ansible.builtin.file: { path: /home/arendaja/src, state: directory, owner: arendaja, group: arendaja, mode: "0755" }
+    - ansible.builtin.copy:
+        content: "print('Tere, NordicTech!')\n"
+        dest: /home/arendaja/src/hello.py
+        owner: arendaja
+        group: arendaja
+        force: false
+
+- name: Raamatupidaja profiil (ws-fin-01)
+  hosts: ws-fin-01
+  gather_facts: false
+  tasks:
+    - ansible.builtin.user: { name: raamatupidaja, shell: /bin/bash, create_home: true }
+    - name: Ilma sudo õiguseta
+      ansible.builtin.file: { path: /etc/sudoers.d/raamatupidaja, state: absent }
+    - ansible.builtin.file: { path: /home/raamatupidaja/Raamatupidamine_2026, state: directory, owner: raamatupidaja, group: raamatupidaja, mode: "0700" }
+    - name: Range umask 0077
+      ansible.builtin.lineinfile:
+        path: "/home/raamatupidaja/{{ item }}"
+        line: "umask 0077"
+        create: true
+        owner: raamatupidaja
+        group: raamatupidaja
+        mode: "0600"
+      loop: [.profile, .bashrc]
+    - name: Näidisandmed (ei kirjuta üle)
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/home/raamatupidaja/Raamatupidamine_2026/{{ item | basename }}"
+        owner: raamatupidaja
+        group: raamatupidaja
+        mode: "0600"
+        force: false
+      with_fileglob: "{{ playbook_dir }}/../profiles/fin/sample/*"
+
+- name: Kioski profiil (kiosk-lobby)
+  hosts: kiosk-lobby
+  gather_facts: false
+  tasks:
+    - ansible.builtin.lineinfile: { path: /etc/shells, line: /bin/rbash }
+    - ansible.builtin.user: { name: kiosk, shell: /bin/rbash, create_home: true, password_lock: true }
+    - name: Kodukataloog ja bin kuuluvad root'ile (kasutaja ei saa muuta)
+      ansible.builtin.file: { path: "{{ item }}", state: directory, owner: root, group: kiosk, mode: "0750" }
+      loop: [/home/kiosk, /home/kiosk/bin]
+    - name: Lubatud käsud
+      ansible.builtin.file: { src: "/usr/bin/{{ item }}", dest: "/home/kiosk/bin/{{ item }}", state: link }
+      loop: [ls, date, clear, echo]
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../profiles/kiosk/bash_profile", dest: "/home/kiosk/{{ item }}", owner: root, group: kiosk, mode: "0444" }
+      loop: [.bash_profile, .bashrc]
+    - ansible.builtin.file: { path: /etc/sudoers.d/kiosk, state: absent }
+
+- name: Rakendusserveri baas (dnf/rpm)
+  hosts: srv-app-01
+  gather_facts: false
+  tasks:
+    - ansible.builtin.dnf: { name: [nginx, rsync], state: present }
+    - ansible.builtin.copy: { content: "<h1>NordicTech siseveeb</h1>\n", dest: /usr/share/nginx/html/index.html }
+    - name: Käivita nginx (ei ole systemd'i)
+      ansible.builtin.shell: pgrep -x nginx >/dev/null || nginx
+      changed_when: false
+    - ansible.builtin.command: rpm -q nginx
+      changed_when: false

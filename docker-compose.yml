@@ -1,0 +1,110 @@
+# CyberFleet 2026 - NordicTech OÜ klientseadmete park (8 konteinerit, 3 võrku)
+name: cyberfleet
+
+networks:
+  mgmt_net:            # HALDUSTSOON
+    driver: bridge
+    ipam: { config: [ { subnet: 172.30.10.0/24 } ] }
+  corp_net:            # KONTORITSOON
+    driver: bridge
+    ipam: { config: [ { subnet: 172.30.20.0/24 } ] }
+  dmz_iot:             # PIIRATUD TSOON (IoT + kiosk)
+    driver: bridge
+    ipam: { config: [ { subnet: 172.30.30.0/24 } ] }
+
+volumes:
+  ssh_keys:            # hq-controller Ed25519 võtmepaar
+  fleet_data:          # telemeetria, baseline, varunduse staging, krüpteerimisvõti
+
+services:
+  # 1. Juhtsõlm: ainus, kes on kõigis kolmes võrgus
+  hq-controller:
+    build: { context: ./docker, dockerfile: ubuntu.Dockerfile, target: controller }
+    image: cyberfleet/controller
+    container_name: hq-controller
+    hostname: hq-controller
+    ports: ["8080:8080"]
+    volumes:
+      - ./:/ansible
+      - ssh_keys:/root/.ssh
+      - fleet_data:/opt/cyberfleet
+    networks:
+      mgmt_net: { ipv4_address: 172.30.10.10 }
+      corp_net: { ipv4_address: 172.30.20.10 }
+      dmz_iot:  { ipv4_address: 172.30.30.10 }
+    depends_on: [backup-vault, ws-dev-01, ws-fin-01, srv-app-01, kiosk-lobby, iot-sensor-1, iot-cam-1]
+    restart: unless-stopped
+
+  # 2. Varundusserver - ainult mgmt_net
+  backup-vault:
+    build: { context: ./docker, dockerfile: debian.Dockerfile }
+    image: cyberfleet/debian-node
+    container_name: backup-vault
+    hostname: backup-vault
+    networks:
+      mgmt_net: { ipv4_address: 172.30.10.11 }
+    restart: unless-stopped
+
+  # 3-5. Kontoritsoon
+  ws-dev-01:
+    build: { context: ./docker, dockerfile: ubuntu.Dockerfile, target: node }
+    image: cyberfleet/ubuntu-node
+    container_name: ws-dev-01
+    hostname: ws-dev-01
+    networks:
+      corp_net: { ipv4_address: 172.30.20.11 }
+    restart: unless-stopped
+
+  ws-fin-01:
+    build: { context: ./docker, dockerfile: ubuntu.Dockerfile, target: node }
+    image: cyberfleet/ubuntu-node
+    container_name: ws-fin-01
+    hostname: ws-fin-01
+    networks:
+      corp_net: { ipv4_address: 172.30.20.12 }
+    restart: unless-stopped
+
+  srv-app-01:
+    build: { context: ./docker, dockerfile: rocky.Dockerfile }
+    image: cyberfleet/rocky-node
+    container_name: srv-app-01
+    hostname: srv-app-01
+    networks:
+      corp_net: { ipv4_address: 172.30.20.13 }
+    restart: unless-stopped
+
+  # 6-8. Piiratud tsoon (dmz_iot) - EI näe corp_net ega mgmt_net seadmeid
+  kiosk-lobby:
+    build:
+      context: ./docker
+      dockerfile: debian.Dockerfile
+      args: { EXTRA_PKGS: "telnet netcat-openbsd" }   # teadlikult ohtlikud tööriistad, karastamine eemaldab
+    image: cyberfleet/debian-weak
+    container_name: kiosk-lobby
+    hostname: kiosk-lobby
+    networks:
+      dmz_iot: { ipv4_address: 172.30.30.11 }
+    restart: unless-stopped
+
+  iot-sensor-1:
+    build: { context: ./docker, dockerfile: alpine.Dockerfile }
+    image: cyberfleet/alpine-node
+    container_name: iot-sensor-1
+    hostname: iot-sensor-1
+    environment: { START_CROND: "1" }     # sensor.log iga minuti järel
+    networks:
+      dmz_iot: { ipv4_address: 172.30.30.12 }
+    restart: unless-stopped
+
+  iot-cam-1:
+    build:
+      context: ./docker
+      dockerfile: debian.Dockerfile
+      args: { EXTRA_PKGS: "telnet netcat-openbsd" }
+    image: cyberfleet/debian-weak
+    container_name: iot-cam-1
+    hostname: iot-cam-1
+    environment: { WEAK_CONFIG: "1" }     # nõrk algkonfiguratsioon (admin:admin, tühjad paroolid lubatud)
+    networks:
+      dmz_iot: { ipv4_address: 172.30.30.13 }
+    restart: unless-stopped

@@ -1,0 +1,12 @@
+[user]
+    name = NordicTech Developer
+    email = arendaja@nordictech.ee
+[core]
+    editor = vim
+[init]
+    defaultBranch = main
+[pull]
+    rebase = true
+[alias]
+    st = status -sb
+    co = checkout

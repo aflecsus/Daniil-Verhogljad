@@ -1,0 +1,58 @@
+---
+# Krüpteeritud varundus: tar.gz -> hq-controller -> AES-256-CBC (OpenSSL, PBKDF2) + SHA-256 -> backup-vault
+- name: 1/3 Paki andmed sõlmedes ja too kontrollerisse
+  hosts: ws-fin-01,ws-dev-01,srv-app-01,iot-sensor-1
+  gather_facts: false
+  vars_files: [vars/backup.yml]
+  tasks:
+    - ansible.builtin.command: "tar -czf /tmp/{{ inventory_hostname }}.tgz -C / {{ backup_map[inventory_hostname] | join(' ') }}"
+      register: tar
+      failed_when: tar.rc not in [0, 1]
+    - ansible.builtin.fetch:
+        src: "/tmp/{{ inventory_hostname }}.tgz"
+        dest: "{{ staging }}/{{ inventory_hostname }}.tgz"
+        flat: true
+    - ansible.builtin.file: { path: "/tmp/{{ inventory_hostname }}.tgz", state: absent }
+
+- name: 2/3 Krüpteeri AES-256 ja arvuta SHA-256
+  hosts: controller
+  gather_facts: true
+  vars_files: [vars/backup.yml]
+  tasks:
+    - ansible.builtin.set_fact: { backup_ts: "{{ ansible_date_time.iso8601_basic_short }}" }
+    - name: Krüpteerimisvõti (üks kord)
+      ansible.builtin.shell: umask 077 && openssl rand -base64 48 > {{ keyfile }}
+      args: { creates: "{{ keyfile }}" }
+    - name: AES-256 krüpteerimine
+      ansible.builtin.shell: >
+        openssl enc -aes-256-cbc -pbkdf2 -iter {{ pbkdf2_iter }} -salt
+        -in {{ item }}.tgz -out {{ item }}-{{ backup_ts }}.tgz.enc -pass file:{{ keyfile }}
+        && sha256sum {{ item }}-{{ backup_ts }}.tgz.enc > {{ item }}-{{ backup_ts }}.tgz.enc.sha256
+        && rm -f {{ item }}.tgz
+      args: { chdir: "{{ staging }}" }
+      loop: "{{ backup_map.keys() | list }}"
+
+- name: 3/3 Saada backup-vault serverisse ja kontrolli räsi
+  hosts: backup-vault
+  gather_facts: false
+  vars_files: [vars/backup.yml]
+  vars:
+    backup_ts: "{{ hostvars['hq-controller']['backup_ts'] }}"
+  tasks:
+    - ansible.builtin.file: { path: "{{ vault_root }}/{{ item }}", state: directory, mode: "0700" }
+      loop: "{{ backup_map.keys() | list }}"
+    - ansible.builtin.copy:
+        src: "{{ staging }}/{{ item.0 }}-{{ backup_ts }}.tgz.enc{{ item.1 }}"
+        dest: "{{ vault_root }}/{{ item.0 }}/"
+        mode: "0600"
+      loop: "{{ backup_map.keys() | list | product(['', '.sha256']) | list }}"
+    - name: Kontrolli SHA-256
+      ansible.builtin.shell: cd {{ vault_root }}/{{ item }} && sha256sum -c {{ item }}-{{ backup_ts }}.tgz.enc.sha256
+      loop: "{{ backup_map.keys() | list }}"
+      changed_when: false
+    - name: Hoia viimased {{ retention }} koopiat
+      ansible.builtin.shell: >
+        cd {{ vault_root }}/{{ item }} &&
+        ls -1t *.tgz.enc | tail -n +{{ retention + 1 }} | while read f; do rm -f "$f" "$f.sha256"; done
+      loop: "{{ backup_map.keys() | list }}"
+      changed_when: false
