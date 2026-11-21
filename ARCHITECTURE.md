@@ -31,4 +31,4 @@ Varukoopiad liiguvad sõlm -> hq-controller -> backup-vault (corp/dmz sõlmedel 
 - Varundus: AES-256-CBC (OpenSSL, PBKDF2 200 000 iter.) + SHA-256, 5 koopiat sõlme kohta.
 
 ## 5. Piirangud
-Konteinerid jagavad hosti tuuma; võrgupoliitikat ei jõustata iptables'iga kioskis (ainult Dockeri tsoonid).
+Konteinerid jagavad hosti tuuma. Kiosk piirab väljuvat liiklust iptables'iga (lubatud ainult hq-controller 172.30.30.10); IoT-sõlmed toetuvad Dockeri tsoonide isolatsioonile.

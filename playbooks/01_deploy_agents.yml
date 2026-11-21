@@ -1,0 +1,50 @@
+---
+# ÕV 1: Osquery agent Ubuntu/Debian/Rocky sõlmedesse, kerge telemeetria Alpine'i.
+# Kollektor (fleet_collect) kasutab Osquery SQL-i; Alpine'is /proc varianti.
+- name: Osquery ja telemeetria agent
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    osquery_version: "5.12.1"
+    arch_deb: "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
+    arch_rpm: "{{ 'aarch64' if ansible_architecture in ['aarch64', 'arm64'] else 'x86_64' }}"
+  tasks:
+    - name: Osquery .deb (Ubuntu/Debian)
+      when: ansible_os_family == 'Debian'
+      block:
+        - ansible.builtin.get_url:
+            url: "https://pkg.osquery.io/deb/osquery_{{ osquery_version }}-1.linux_{{ arch_deb }}.deb"
+            dest: /tmp/osquery.deb
+            mode: "0644"
+            timeout: 120
+        - ansible.builtin.apt:
+            deb: /tmp/osquery.deb
+            state: present
+
+    - name: Osquery .rpm (Rocky Linux)
+      when: ansible_os_family == 'RedHat'
+      block:
+        - ansible.builtin.get_url:
+            url: "https://pkg.osquery.io/rpm/osquery-{{ osquery_version }}-1.linux.{{ arch_rpm }}.rpm"
+            dest: /tmp/osquery.rpm
+            mode: "0644"
+            timeout: 120
+        - ansible.builtin.dnf:
+            name: /tmp/osquery.rpm
+            state: present
+            disable_gpg_check: true
+
+    - name: Poliitika kataloog
+      ansible.builtin.file: { path: /etc/cyberfleet, state: directory, mode: "0755" }
+    - name: Poliitika fail
+      ansible.builtin.copy: { src: "{{ playbook_dir }}/../policy.json", dest: /etc/cyberfleet/policy.json, mode: "0644" }
+    - name: Telemeetria kollektor (kõigile, ka Alpine)
+      ansible.builtin.copy: { src: "{{ playbook_dir }}/../files/fleet_collect.py", dest: /usr/local/bin/fleet_collect, mode: "0755" }
+
+    - name: Kontrolli agenti
+      ansible.builtin.command: /usr/local/bin/fleet_collect inventory
+      register: probe
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: mootor = {{ (probe.stdout | from_json).engine }}"

@@ -78,10 +78,11 @@ services:
     build:
       context: ./docker
       dockerfile: debian.Dockerfile
-      args: { EXTRA_PKGS: "telnet netcat-openbsd" }   # teadlikult ohtlikud tööriistad, karastamine eemaldab
-    image: cyberfleet/debian-weak
+      args: { EXTRA_PKGS: "telnet netcat-openbsd iptables" }   # telnet/nc: teadlikult ohtlikud, karastamine eemaldab
+    image: cyberfleet/debian-kiosk
     container_name: kiosk-lobby
     hostname: kiosk-lobby
+    cap_add: [NET_ADMIN]                  # väljuva liikluse piiramiseks (iptables)
     networks:
       dmz_iot: { ipv4_address: 172.30.30.11 }
     restart: unless-stopped

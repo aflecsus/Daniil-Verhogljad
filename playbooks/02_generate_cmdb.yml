@@ -1,0 +1,32 @@
+---
+# Elav CMDB: Nginx (port 8080) + Osquery andmed -> /var/www/html/index.html
+- name: Nginx armatuurlaua veebiserver
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - ansible.builtin.file: { path: /etc/nginx/sites-enabled/default, state: absent }
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../files/nginx-cmdb.conf", dest: /etc/nginx/conf.d/cmdb.conf, mode: "0644" }
+    - name: Nginx test + (re)load
+      ansible.builtin.shell: nginx -t && (nginx -s reload 2>/dev/null || nginx)
+      changed_when: false
+
+- name: Kogu inventari andmed kõigilt masinatelt
+  hosts: all
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: /usr/local/bin/fleet_collect inventory
+      register: inv
+      changed_when: false
+    - ansible.builtin.copy:
+        content: "{{ inv.stdout }}\n"
+        dest: "/opt/cyberfleet/data/{{ inventory_hostname }}.inventory.json"
+      delegate_to: localhost
+
+- name: Genereeri HTML CMDB
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: python3 {{ playbook_dir }}/../files/render_dashboard.py
+      register: render
+      changed_when: false
+    - ansible.builtin.debug: { msg: "{{ render.stdout }}" }

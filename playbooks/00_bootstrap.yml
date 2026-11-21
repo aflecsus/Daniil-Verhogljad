@@ -1,0 +1,20 @@
+---
+# Paroolivaba haldus: levita hq-controller Ed25519 avalik võti kõigisse 7 hallatavasse sõlme.
+# Esmakordne ühendus käib paroolil (ainult selles playbookis), edasi ainult SSH võtmega.
+- name: Levita SSH avalik võti
+  hosts: managed
+  gather_facts: false
+  vars:
+    ansible_password: cyberfleet
+  tasks:
+    - name: authorized_keys <- hq-controller avalik võti
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ lookup('file', '/root/.ssh/id_ed25519.pub') }}"
+        state: present
+
+- name: Kontrolli ühendust (peab olema 100% roheline)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - ansible.builtin.ping:

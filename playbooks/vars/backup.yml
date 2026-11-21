@@ -1,0 +1,10 @@
+backup_map:
+  ws-fin-01: ["home/raamatupidaja/Raamatupidamine_2026"]
+  ws-dev-01: ["home/arendaja/src"]
+  srv-app-01: ["etc"]
+  iot-sensor-1: ["var/log/sensor.log"]
+vault_root: /srv/vault
+staging: /opt/cyberfleet/staging
+keyfile: /opt/cyberfleet/secret/backup.key
+pbkdf2_iter: 200000
+retention: 5

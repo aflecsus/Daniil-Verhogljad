@@ -1,0 +1,94 @@
+---
+# ÕV 4: karastamine + enesetervendus (cron käivitab selle iga 10 min järel)
+- name: CIS-stiilis karastamine
+  hosts: managed
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    sshd_settings:
+      PasswordAuthentication: "no"
+      PermitRootLogin: prohibit-password
+      PubkeyAuthentication: "yes"
+      PermitEmptyPasswords: "no"
+      X11Forwarding: "no"
+      MaxAuthTries: "3"
+      Banner: /etc/issue.net
+  tasks:
+    - name: sshd_config väärtused
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^\s*#?\s*{{ item.key }}\s'
+        line: "{{ item.key }} {{ item.value }}"
+      loop: "{{ sshd_settings | dict2items }}"
+      notify: reload sshd
+
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../files/issue.net", dest: /etc/issue.net, mode: "0644" }
+    - ansible.builtin.copy: { src: "{{ playbook_dir }}/../files/issue.net", dest: /etc/motd, mode: "0644" }
+
+    - name: Failiõigused (taastab, kui keegi neid muudab)
+      ansible.builtin.file: { path: "{{ item.path }}", owner: root, group: root, mode: "{{ item.mode }}" }
+      loop:
+        - { path: /etc/passwd, mode: "0644" }
+        - { path: /etc/ssh/sshd_config, mode: "0600" }
+
+    - name: Nõrk admin konto eemaldada (IoT)
+      ansible.builtin.user: { name: admin, state: absent, remove: true }
+      when: "'iot' in group_names"
+
+    - name: Ohtlikud tööriistad eemaldada - Debian (kiosk, IoT)
+      ansible.builtin.apt:
+        name: [telnet, netcat-openbsd, netcat-traditional, ncat, gcc, g++, make]
+        state: absent
+        purge: true
+        autoremove: true
+      when: ansible_os_family == 'Debian' and ('kiosks' in group_names or 'iot' in group_names)
+
+    - name: Ohtlikud tööriistad eemaldada - Alpine (busybox nc/telnet)
+      ansible.builtin.file: { path: "{{ item }}", state: absent }
+      loop: [/usr/bin/nc, /bin/nc, /usr/bin/telnet, /bin/telnet]
+      when: ansible_os_family == 'Alpine' and 'iot' in group_names
+
+    - name: Kioskist sudo ära
+      ansible.builtin.apt: { name: sudo, state: absent, purge: true }
+      when: "'kiosks' in group_names"
+
+    - name: Kiosk - lubatud ainult kindlad väljuvad ühendused (ainult hq-controller)
+      ansible.builtin.shell: |
+        set -e
+        iptables -F OUTPUT
+        iptables -A OUTPUT -o lo -j ACCEPT
+        iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        iptables -A OUTPUT -d 172.30.30.10 -j ACCEPT
+        iptables -P OUTPUT DROP
+      when: "'kiosks' in group_names"
+      changed_when: false
+
+  handlers:
+    - name: reload sshd
+      ansible.builtin.shell: kill -HUP "$(cat /run/sshd.pid)"
+
+- name: Enesetervendus ja pidev seire (cron hq-controlleris)
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - name: Drift remediation iga 10 min
+      ansible.builtin.cron:
+        name: "CyberFleet drift remediation"
+        minute: "*/10"
+        user: root
+        cron_file: cyberfleet
+        job: "cd /ansible && LC_ALL=C.UTF-8 ANSIBLE_CONFIG=/ansible/ansible.cfg flock -w 300 /tmp/cf.lock ansible-playbook playbooks/04_hardening.yml >> /var/log/cyberfleet-drift.log 2>&1"
+    - name: Turvaaudit iga 2 min (armatuurlaud uueneb)
+      ansible.builtin.cron:
+        name: "CyberFleet security audit"
+        minute: "*/2"
+        user: root
+        cron_file: cyberfleet
+        job: "cd /ansible && LC_ALL=C.UTF-8 ANSIBLE_CONFIG=/ansible/ansible.cfg flock -w 300 /tmp/cf.lock ansible-playbook playbooks/05_security_audit.yml >> /var/log/cyberfleet-audit.log 2>&1"
+    - name: CMDB inventar iga 10 min
+      ansible.builtin.cron:
+        name: "CyberFleet CMDB refresh"
+        minute: "5-59/10"
+        user: root
+        cron_file: cyberfleet
+        job: "cd /ansible && LC_ALL=C.UTF-8 ANSIBLE_CONFIG=/ansible/ansible.cfg flock -w 300 /tmp/cf.lock ansible-playbook playbooks/02_generate_cmdb.yml >> /var/log/cyberfleet-audit.log 2>&1"
